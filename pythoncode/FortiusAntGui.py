@@ -409,7 +409,7 @@ class frmFortiusAntGui(wx.Frame):
             self.Revs.DisableFocusFromKeyboard()
 
             self.Revs.SetSpeedBackground(bg)
-            self.Revs.SetFirstGradientColour(wx.BLUE)                       # Colours for SM_DRAW_GRADIENT
+            self.Revs.SetFirstGradientColour(colorTacxFortius)                       # Colours for SM_DRAW_GRADIENT
             self.Revs.SetSecondGradientColour(wx.WHITE)
             self.Revs.DrawExternalArc(True)                                 # Do (Not) Draw The External (Container) Arc.
             self.Revs.SetArcColour(wx.BLUE)

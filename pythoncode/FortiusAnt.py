@@ -68,7 +68,7 @@ import settings
 import structConstants      as sc
 import TCXexport
 import usbTrainer
-
+import Kill
 if UseGui:
     import wx
     import FortiusAntGui        as gui
@@ -415,6 +415,7 @@ if UseGui:
             if self.RunningSwitch == True:          # Thread is running
                 self.GuiMessageToMain(cmd_StopButton, False)
             gui.frmFortiusAntGui.OnClose(self, event)
+          
 
 # ==============================================================================
 # Class to create a parent-process
@@ -529,11 +530,12 @@ class clsFortiusAntParent:
                     logfile.Console ('Stop button pressed')
                 self.RunningSwitch = False
                 self.MainRespondToGUI(cmd_StopButton, True)
-
+                #time.sleep(1)
+                #os.kill(pid, 9)  # 9 ist das Signal SIGKILL, das den Prozess sofort beendet
             else:
                 logfile.Console('Unexpected command from GUI: %s' % gui_command)
                 rtn = False
-
+        return thread
 # ------------------------------------------------------------------------------
 # F o r t i u s A n t C h i l d
 # ------------------------------------------------------------------------------
@@ -732,12 +734,13 @@ def mainProgram():
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     global RestartApplication, clv
-
+    Kill.pid = os.getpid()
     RestartApplication = False
     while True:
         mainProgram()
+        #os.kill(pid, 9)  # 9 ist das Signal SIGKILL, das den Prozess sofort beendet
         if not RestartApplication: break
-
+    
     # ------------------------------------------------------------------------------
     # If so requested, shutdown Raspberry pi
     # ------------------------------------------------------------------------------
