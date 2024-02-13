@@ -128,7 +128,7 @@ LargeTexts          = True  # 2020-02-07
 
 bg                  = wx.Colour(220,220,220) # Background colour [for self.Speedometers]
 colorTacxFortius    = wx.Colour(120,148,227)
-Margin              = 4
+Margin              = 1
 
 FixedForDocu        = False
 
@@ -412,7 +412,7 @@ class frmFortiusAntGui(wx.Frame):
             self.Revs.SetFirstGradientColour(colorTacxFortius)                       # Colours for SM_DRAW_GRADIENT
             self.Revs.SetSecondGradientColour(wx.WHITE)
             self.Revs.DrawExternalArc(True)                                 # Do (Not) Draw The External (Container) Arc.
-            self.Revs.SetArcColour(wx.BLUE)
+            self.Revs.SetArcColour(wx.BLACK)
 
             self.Revs.SetAngleRange(-math.pi / 6, 7 * math.pi / 6)          # Set The Region Of Existence Of self.RevsMeter (Always In Radians!!!!)
             self.Revs.SetHandColour(wx.Colour(255, 50, 0))                	# Set The Colour For The Hand Indicator
@@ -486,7 +486,7 @@ class frmFortiusAntGui(wx.Frame):
         # ----------------------------------------------------------------------
 		# Font sizing for all measurements
         # ----------------------------------------------------------------------
-        TextCtrlFont = wx.Font(24, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        TextCtrlFont = wx.Font(20, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         TextCtrlH    = 40
         TextCtrlW    = int(SpeedWH/2)
 
@@ -630,36 +630,42 @@ class frmFortiusAntGui(wx.Frame):
 
         self.btnSettings = wx.BitmapButton(self.panel, bitmap=b, size=(ButtonW, -1), style=0) # wx.NO_BORDER)
         self.btnSettings.SetToolTip ("Modify settings and optionally save for next session")
-        self.btnSettings.SetPosition((ButtonX, self.btnSettings.Size[1]))
+        self.btnSettings.SetPosition((ButtonX,1))# self.btnSettings.Size[1]))
         self.btnSettings.SetFocus()
+        self.btnSettings.SetBackgroundColour(bg)
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnSettings, self.btnSettings)
 
         self.btnLocateHW = wx.Button(self.panel, label="Locate HW", size=(ButtonW, -1))
         self.btnLocateHW.SetToolTip ("Connect to USB-devices (Tacx trainer and/or ANTdongle)")
         self.btnLocateHW.SetPosition((ButtonX, self.btnSettings.Position[1] + self.btnSettings.Size[1] + Margin))
         self.btnLocateHW.SetFocus()
+        self.btnLocateHW.SetBackgroundColour(bg)
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnLocateHW, self.btnLocateHW)
 
         self.btnRunoff   = wx.Button(self.panel, label="Runoff", size=(ButtonW, -1))
         self.btnRunoff.SetToolTip ("Execute runoff-procedure (recommended for magnetic brake trainers)")
         self.btnRunoff.SetPosition((ButtonX, self.btnLocateHW.Position[1] + self.btnLocateHW.Size[1] + Margin))
         self.btnRunoff.Disable()
+        self.btnRunoff.SetBackgroundColour(bg)
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnRunoff, self.btnRunoff)
 
         self.btnStart    = wx.Button(self.panel, label="Start", size=(ButtonW, -1))
         self.btnStart.SetToolTip ("Start communication with Cycle Training Program")
         self.btnStart.SetPosition((ButtonX, self.btnRunoff.Position[1] + self.btnRunoff.Size[1] + Margin))
         self.btnStart.Disable()
+        self.btnStart.SetBackgroundColour(bg)
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnStart, self.btnStart)
 
         self.btnStop     = wx.Button(self.panel, label="Stop", size=(ButtonW, -1))
         self.btnStop.SetToolTip ("Stop FortiusAnt bridge")
         self.btnStop.SetPosition((ButtonX, self.btnStart.Position[1] + self.btnStart.Size[1] + Margin))
         self.btnStop.Disable()
+        self.btnStop.SetBackgroundColour(bg)
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnStop, self.btnStop)
 
         b = wx.Image(sponsor_bmp)       # Must fit, no rescale
         b = wx.Bitmap(b)
+        
         self.btnSponsor = wx.BitmapButton(self.panel, bitmap=b, size=(ButtonW, -1), style=0) # wx.NO_BORDER)
         self.btnSponsor.SetToolTip ("Become a sponsor for FortiusAnt")
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnSponsor, self.btnSponsor)
@@ -669,10 +675,11 @@ class frmFortiusAntGui(wx.Frame):
         self.Bind(wx.EVT_BUTTON, self.OnClick_btnHelp, self.btnHelp)
 
         # Move Help button above the texts
-        self.btnHelp.SetPosition((ButtonX, self.txtUsbTrainer.Position[1] - self.txtUsbTrainer.Size[1] - Margin))
+        self.btnHelp.SetPosition((ButtonX, self.txtUsbTrainer.Position[1] - self.btnHelp.Size[1]- Margin))#self.txtUsbTrainer.Size[1] - Margin))
+        self.btnHelp.SetBackgroundColour(bg)
         # Move Sponsor button above Help
         self.btnSponsor.SetPosition((ButtonX, self.btnHelp.Position[1] - self.btnHelp.Size[1] - Margin))
-
+        self.btnSponsor.SetBackgroundColour(bg)
         # ----------------------------------------------------------------------
 		# Frame resizes based upon the created controles, se center here!
         # ----------------------------------------------------------------------

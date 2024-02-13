@@ -530,13 +530,10 @@ class clsFortiusAntParent:
                     logfile.Console ('Stop button pressed')
                 self.RunningSwitch = False
                 self.MainRespondToGUI(cmd_StopButton, True)
-                #time.sleep(1)
-                #os.kill(pid, 9)  # 9 ist das Signal SIGKILL, das den Prozess sofort beendet
-            else:
+        else:
                 logfile.Console('Unexpected command from GUI: %s' % gui_command)
                 rtn = False
-        return thread
-# ------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
 # F o r t i u s A n t C h i l d
 # ------------------------------------------------------------------------------
 # Input:        clv     Command line variables
@@ -738,7 +735,6 @@ if __name__ == "__main__":
     RestartApplication = False
     while True:
         mainProgram()
-        #os.kill(pid, 9)  # 9 ist das Signal SIGKILL, das den Prozess sofort beendet
         if not RestartApplication: break
     
     # ------------------------------------------------------------------------------

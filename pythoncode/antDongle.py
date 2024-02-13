@@ -853,7 +853,6 @@ class clsAntDongle():
             self.ThreadActive  = True
             self.MessageThread.start()
             if debug.on(debug.Function): logfile.Write ("StartReadThread(): Thread started")
-            
     def Read(self, drop, timeout=20):
         if self.UseThread and self.ThreadActive:
             # Reading is done by ReadThread()
