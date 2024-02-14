@@ -415,7 +415,6 @@ if UseGui:
             if self.RunningSwitch == True:          # Thread is running
                 self.GuiMessageToMain(cmd_StopButton, False)
             gui.frmFortiusAntGui.OnClose(self, event)
-          
 
 # ==============================================================================
 # Class to create a parent-process
@@ -530,10 +529,12 @@ class clsFortiusAntParent:
                     logfile.Console ('Stop button pressed')
                 self.RunningSwitch = False
                 self.MainRespondToGUI(cmd_StopButton, True)
-        else:
+
+            else:
                 logfile.Console('Unexpected command from GUI: %s' % gui_command)
                 rtn = False
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # F o r t i u s A n t C h i l d
 # ------------------------------------------------------------------------------
 # Input:        clv     Command line variables
@@ -736,7 +737,7 @@ if __name__ == "__main__":
     while True:
         mainProgram()
         if not RestartApplication: break
-    
+
     # ------------------------------------------------------------------------------
     # If so requested, shutdown Raspberry pi
     # ------------------------------------------------------------------------------
