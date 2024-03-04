@@ -1,8 +1,9 @@
 #-------------------------------------------------------------------------------
 # Version info
 #-------------------------------------------------------------------------------
-__version__ = "2024-02-13"
-# 2024-02-13    wx.DEFAULT_FRAME_STYLE replaced by wx.CLOSE_BOX on overlay frame
+__version__ = "2024-02-17"
+# 2024-02-17    #460; the gearboxOverlay window was not closed, so FortiusAnt hanging
+# 2024-02-17    wx.DEFAULT_FRAME_STYLE replaced by wx.CLOSE_BOX on overlay frame
 # 2024-01-31    Smoother power was reset when powermeter resized
 # 2024-01-24    #456 Addition of an overlay window with gearing info
 #               Target grade is displayed with one decimal
@@ -1574,13 +1575,16 @@ class frmFortiusAntGui(wx.Frame):
             #       1. set CloseButtonPressed = False
             #       2. call self.Close()
             # This event will be called again and go through the else and end.
+
         elif self.CloseButtonPressed:           # Waiting for thread to finish;
                                                 # Do not close again!
             print('Please wait for thread to end...')
             pass
 
         else:                                   # No thread is running;
+            self.GearboxOverlay.ForceClose()
             event.Skip()				        # Do default actions (stop program)
+            # After this action, the frame is closed and app.MainLoop() should end
 
 # ------------------------------------------------------------------------------
 # Create the GearBox overlay frame (added #456)
@@ -1604,6 +1608,7 @@ class frmFortiusAntGui(wx.Frame):
 #
 # ------------------------------------------------------------------------------
 class clsGearboxOverlay(wx.Frame):
+    bHideNotClose         = True
     bGearboxOverlayActive = False
     bGearboxOverlayClosed = False
     PreviousValues        = None
@@ -1614,7 +1619,7 @@ class clsGearboxOverlay(wx.Frame):
         frameX = 2 * Margin +     pCranckset.Size[0] + 15
         frameY = 3 * Margin + 2 * pCranckset.Size[1] + 39
 
-        style = wx.STAY_ON_TOP | wx.FRAME_TOOL_WINDOW | wx.CAPTION | wx.CLOSE_BOX               # old: wx.DEFAULT_FRAME_STYLE
+        style = wx.STAY_ON_TOP | wx.FRAME_TOOL_WINDOW | wx.CAPTION | wx.CLOSE_BOX
         wx.Frame.__init__(self, None, title='Gearbox', size = (frameX,frameY), style = style)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
@@ -1638,8 +1643,12 @@ class clsGearboxOverlay(wx.Frame):
         self.txtCranckset.SetFont(pTextCtrlFont)
         self.txtCassette.SetFont(pTextCtrlFont)
 
+    def ForceClose(self):                       #460 If your create it, you must destroy it!
+        self.bHideNotClose = False
+        self.Close()
+
     def OnClose(self, event):
-        if True:
+        if self.bHideNotClose:                  #460 Hide unless we're stopping
             self.Hide()                         # Close not allowed
             self.bGearboxOverlayClosed = True   # But do not show again
         else:
