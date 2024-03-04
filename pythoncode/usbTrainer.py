@@ -1,8 +1,23 @@
 #-------------------------------------------------------------------------------
 # Version info
 #-------------------------------------------------------------------------------
-__version__ = "2022-01-13"
-# 2022-01-13    #361 clsSimulatedTrainer.Refresh() must correct data type of
+__version__ = "2023-01-19"
+# 2024-01-19    In GradeMode virtual gearbox does not work (#381) for antTrainers,
+#               like Genius and Vortex.
+#               Reason is that, for the other trainers, always a target-resistance
+#               is sent, which is calculated by Grade2Power().
+#               But for Vortex/Genius, the target-grade is provided, which is unchanged.
+#               Therefore now in grademode+gearbox, powermode is used.
+#
+# 2023-12-01    Improvement so that reconnect DOES NOT occur when succesful reads
+#               follow on unsuccesful reads.
+# 2023-10-30    Error recovery on the USB-device improved, because of issue #446
+#               If reading (including retry) fails multiple times, the USB-device is 
+#               re-initialized.
+# 2023-04-06    If UserAndBikeWeight is set below the minimum, a sensible value is set.
+# 2022-08-22    Steering only active when -S wired specified.
+# 2022-08-10    Steering merged from marcoveeneman and switchable's code
+# 2022-03-01    #361 clsSimulatedTrainer.Refresh() must correct data type of
 #               variables otherwise CurrentPower = iPower is not integer.
 # 2021-11-15    "Steering axis = " commented code added for investigation
 # 2021-05-18    TargetResistanceFT used in logfile (instead of TargetResistance)
@@ -160,6 +175,7 @@ from   constants                    import mode_Power, mode_Grade
 import constants
 import debug
 import logfile
+import steering
 import structConstants   as sc
 import FortiusAntCommand as cmd
 import fxload
@@ -351,6 +367,8 @@ class clsTacxTrainer():
         self.Message         = Message
         self.OK              = False
 
+        self.SteeringFrame   = None         # a clsSteeringUnit instance, if available
+
     #---------------------------------------------------------------------------
     # G e t T r a i n e r
     #---------------------------------------------------------------------------
@@ -374,19 +392,65 @@ class clsTacxTrainer():
         if clv.Tacx_Genius:     return clsTacxAntGeniusTrainer(clv, AntDevice)
         if clv.Tacx_Bushido:    return clsTacxAntBushidoTrainer(clv, AntDevice)
 
+
+        #-----------------------------------------------------------------------
+        # Let's see whether there is a USB-headunit connected...
+        #-----------------------------------------------------------------------
+        msg, hu, dev, LegacyProtocol = clsTacxTrainer.InitializeUSB(0)
+
+        #-----------------------------------------------------------------------
+        # Done
+        #-----------------------------------------------------------------------
+        logfile.Console(msg)
+        if debug.on(debug.Function):
+            logfile.Write ("GetTrainer() returns, trainertype=" + hex(hu))
+
+        #-----------------------------------------------------------------------
+        # Return the correct Object
+        #-----------------------------------------------------------------------
+        if dev != False:
+            if LegacyProtocol:
+                return clsTacxLegacyUsbTrainer(clv, msg, hu, dev)
+            else:
+                return clsTacxNewUsbTrainer(clv, msg, hu, dev)
+        else:
+            return clsTacxTrainer (clv, msg)           # where .OK = False
+
+    #---------------------------------------------------------------------------
+    # I n i t i a l i z e U S B
+    #---------------------------------------------------------------------------
+    # Input         previousHU, is used to reconnect on error-recovery
+    #
+    # Function      Find USB-connected headunit and perform initialization
+    #               This function was part of GetTrainer().
+    #               Issue #446 reports disconnect of the USB headunit which does
+    #               not recover.
+    #               InitializeUSB() is used to reconnect when erros occur,
+    #               practice must reveal whether this works.
+    #
+    # Output        msg, hu, dev, LegacyProtocol
+    #---------------------------------------------------------------------------
+    @staticmethod
+    def InitializeUSB(previousHu):
+        logfile.Console ("Find and initialise USB head unit")
         #-----------------------------------------------------------------------
         # So we are going to initialize USB
         # This may be either 'Legacy interface' or 'New interface'
         #-----------------------------------------------------------------------
         msg             = "No Tacx trainer found"
-        hu              = None                      # TrainerType
+        hu              = 0                         # TrainerType
         dev             = False
         LegacyProtocol  = False
 
         #-----------------------------------------------------------------------
         # Find supported trainer (actually we talk to a headunit)
         #-----------------------------------------------------------------------
-        for hu in [hu1902, hu1902_nfw, hu1904, hu1932, hu1942, hue6be_nfw]:
+        if previousHu == 0:
+            HuList = [hu1902, hu1902_nfw, hu1904, hu1932, hu1942, hue6be_nfw]
+        else:
+            HuList = [previousHu]
+
+        for hu in HuList:
             try:
                 if debug.on(debug.Function):
                     logfile.Write ("GetTrainer - Check for trainer %s" % (hex(hu)))
@@ -475,22 +539,9 @@ class clsTacxTrainer():
                 dev.write(0x02,data)
 
         #-----------------------------------------------------------------------
-        # Done
+        # Return results
         #-----------------------------------------------------------------------
-        logfile.Console(msg)
-        if debug.on(debug.Function):
-            logfile.Write ("GetTrainer() returns, trainertype=" + hex(hu))
-
-        #-----------------------------------------------------------------------
-        # Return the correct Object
-        #-----------------------------------------------------------------------
-        if dev != False:
-            if LegacyProtocol:
-                return clsTacxLegacyUsbTrainer(clv, msg, hu, dev)
-            else:
-                return clsTacxNewUsbTrainer(clv, msg, hu, dev)
-        else:
-            return clsTacxTrainer (clv, msg)           # where .OK = False
+        return msg, hu, dev, LegacyProtocol
 
     #---------------------------------------------------------------------------
     # Functions from external to provide data
@@ -545,11 +596,17 @@ class clsTacxTrainer():
         self.DraftingFactor = DraftingFactor
 
     def SetUserConfiguration(self, UserWeight, BicycleWeight, BicycleWheelDiameter, GearRatio):
-        self.BicycleWeight          = BicycleWeight
-        self.BicycleWheelDiameter   = BicycleWheelDiameter
-        self.GearRatio              = GearRatio
-        self.UserWeight             = UserWeight
-        self.UserAndBikeWeight      = UserWeight + BicycleWeight
+        if debug.on(debug.Function):
+            logfile.Write ("SetUserConfiguration(%s[def=75kg], %s[def=10kg], %s, %s)" % (UserWeight, BicycleWeight, BicycleWheelDiameter, GearRatio))
+
+        if (UserWeight + BicycleWeight) < 70:
+            logfile.Console("The sun of User- and Bike weight is set to %d, which is below the expected minimum of 70kg; it's ignored." % (UserWeight + BicycleWeight))
+        else:
+            self.BicycleWeight          = BicycleWeight
+            self.BicycleWheelDiameter   = BicycleWheelDiameter
+            self.GearRatio              = GearRatio
+            self.UserWeight             = UserWeight
+            self.UserAndBikeWeight      = UserWeight + BicycleWeight
 
     #---------------------------------------------------------------------------
     # SendToTrainer() and ReceivedFromTrainer() to be defined by sub-class
@@ -617,7 +674,7 @@ class clsTacxTrainer():
         self.PreviousPedalEcho = self.PedalEcho
 
         #-----------------------------------------------------------------------
-        # Calculate Virtual speed applying the digital gearbox
+        # Calculate Virtual speed applying the digital gearbox (@GearboxReduction, #381)
         # if DOWN has been pressed, we pretend to be riding slower than the
         #       trainer wheel rotates
         # if UP has been pressed, we pretend to be faster than the trainer
@@ -974,6 +1031,15 @@ class clsSimulatedTrainer(clsTacxTrainer):
         self.clv.PowerFactor = 1            # Not applicable for simulation
         self.Operational     = True         # Always true
 
+        # ----------------------------------------------------------------------
+        # Steering
+        # ----------------------------------------------------------------------
+        if self.clv.Steering == 'wired':
+            self.Steering1st     = True
+            self.SteeringFrame   = steering.clsSteering(InitialCalLeft=-100,
+                                                        InitialCalRight=100,
+                                                        DeadZone=7.0)
+
     # --------------------------------------------------------------------------
     # R e f r e s h
     # --------------------------------------------------------------------------
@@ -1009,7 +1075,7 @@ class clsSimulatedTrainer(clsTacxTrainer):
         # ----------------------------------------------------------------------
         # Randomize figures
         # ----------------------------------------------------------------------
-        self.Axis               = 0
+        self.Axis               = 75        # I have no sensible random axis
         self.Buttons            = 0
         self.TargetResistance   = 2345
 
@@ -1055,12 +1121,27 @@ class clsSimulatedTrainer(clsTacxTrainer):
         # Round after all these calculations (and correct data type!) #361 
         # ----------------------------------------------------------------------
         self.Cadence             = int(self.Cadence)
+        self.HeartRate           = int(self.HeartRate)
         self.TargetPower         = int(self.TargetPower)
         self.TargetResistance    = int(self.TargetResistance)
         self.CurrentResistance   = int(self.CurrentResistance)
         self.CurrentPower        = int(self.CurrentPower)
         self.SpeedKmh            = round(self.SpeedKmh,1)
         self.VirtualSpeedKmh     = round(self.VirtualSpeedKmh,1)
+
+        # ----------------------------------------------------------------------
+        # Steering
+        # ----------------------------------------------------------------------
+        if self.clv.Steering == 'wired':
+            if self.Steering1st:
+                # First time, send the stable center position. For us zero is fine.
+                for _i in range(10): self.SteeringFrame.Update(   0) # Calibrate center
+                for _i in range(10): self.SteeringFrame.Update( 110) # Calibrate right
+                for _i in range(10): self.SteeringFrame.Update(-110) # Calibrate left
+                self.Steering1st = False
+
+            # Invert axis value so lower value -> left (not right)
+            for _i in range(10): self.SteeringFrame.Update(-self.Axis)
 
 #-------------------------------------------------------------------------------
 # c l s T a c x A n t V o r t e x T r a i n e r
@@ -1526,19 +1607,34 @@ class clsTacxAntTrainer(clsTacxTrainer):
                         #---------------------------------------------------------------
                         # Set target slope
                         #---------------------------------------------------------------
+                        if self.GearboxReduction == 1:   # Original code
+                            # the brake does not support changing the rolling resistance
+                            # directly; higher than default rolling resistance is simulated
+                            # by increasing the grade (result is the same)
+                            effectiveGrade = self.TargetGrade + self.__RollingResistance2Grade()
 
-                        # the brake does not support changing the rolling resistance
-                        # directly; higher than default rolling resistance is simulated
-                        # by increasing the grade (result is the same)
-                        effectiveGrade = self.TargetGrade + self.__RollingResistance2Grade()
+                            info = ant.msgPage220_01_TacxGeniusSetTarget(self.Channel, ant.GNS_Mode_Slope,
+                                                                        effectiveGrade, self.UserAndBikeWeight)
 
-                        info = ant.msgPage220_01_TacxGeniusSetTarget(self.Channel, ant.GNS_Mode_Slope,
-                                                                     effectiveGrade, self.UserAndBikeWeight)
+                            if debug.on(debug.Function):
+                                logfile.Write(
+                                    "Tacx page 220/0x01 (OUT)  Mode=%d Target=%.1f Weight=%.1f" % \
+                                    (ant.GNS_Mode_Slope, effectiveGrade, self.UserAndBikeWeight))
 
-                        if debug.on(debug.Function):
-                            logfile.Write(
-                                "Tacx page 220/0x01 (OUT)  Mode=%d Target=%.1f Weight=%.1f" % \
-                                (ant.GNS_Mode_Slope, effectiveGrade, self.UserAndBikeWeight))
+                        else: #381, Gearbox modification, thanks to @krusty82
+                            # To account for the gearbox, power mode is always used
+                            # Note: This might be always valid, but now modifies the code only when
+                            #       the gearbox is used, for other users code is unchanged.
+
+                            Weight   = max(0x0a, int(self.GearboxReduction * self.UserAndBikeWeight))
+                            abspower = max(0, self.TargetResistance)
+                            info     = ant.msgPage220_01_TacxGeniusSetTarget(self.Channel, 
+                                                                ant.GNS_Mode_Power, abspower, Weight)                        
+                            if debug.on(debug.Function):
+                                logfile.Write(
+                                    "Tacx page 220/0x01 (OUT)  Mode=%d Target=%.1f Weight=%.1f" % \
+                                    (ant.GNS_Mode_Power, abspower, Weight))
+
                     else:
                         #---------------------------------------------------------------
                         # Set wind resistance and speed
@@ -2322,6 +2418,7 @@ class clsTacxAntBushidoTrainer(clsTacxAntTrainer):
 # c l s T a c x U s b T r a i n e r
 #-------------------------------------------------------------------------------
 class clsTacxUsbTrainer(clsTacxTrainer):
+    USB_ReadErrorCount = 0
     #---------------------------------------------------------------------------
     # Convert WheelSpeed --> Speed in km/hr
     # SpeedScale must be defined in sub-class
@@ -2428,48 +2525,91 @@ class clsTacxUsbTrainer(clsTacxTrainer):
     #
     # function  Same plus:
     #           At least 40 bytes must be returned, retry 4 times
+    #
+    #           If multiple USB_Read_retry4x40() fail, the USB device is
+    #           reattached.
+    #
+    #           One might argue this error-recovery should also happen in
+    #           USB_write(). USB_Write does not fail unless the USB cable is
+    #           actually disconnected. Since both functions are in the main loop
+    #           reconnecting here works fine.
     #---------------------------------------------------------------------------
     def USB_Read_retry4x40(self, expectedHeader = USB_ControlResponse):
-        retry = 4
+        #-----------------------------------------------------------------------
+        # If multiple reads fail, we try to reconnect.
+        # This is not necessary when succesfull reads occur in the meantime.
+        # This is quite arbitrary, practice must reveal that no unneccessary
+        #       reconnects occur.
+        #
+        # A reconnect occurs:
+        #   fail - fail - fail - fail                 USB_ReadErrorCount = 4
+        #   fail - fail - ok - fail - fail - fail     USB_ReadErrorCount = 4
+        # A reconnect DOES NOT occur:
+        #   fail - ok - fail - ok - fail - ok - fail  USB_ReadErrorCount = 1
+        #-----------------------------------------------------------------------
+        self.USB_ReadErrorCount = max(self.USB_ReadErrorCount - 1, 0)
 
-        while True:
-            data  = self.USB_Read()
+        #-----------------------------------------------------------------------
+        # Let's go
+        #-----------------------------------------------------------------------
+        while True:                         # Recover through InitializeUSB()
+            retry = 4
+            while True:                     # Retry reading through USB_Read()
+                data  = self.USB_Read()
+
+                #---------------------------------------------------------------
+                # Retry if no correct buffer received
+                #---------------------------------------------------------------
+                if retry and (len(data) < 40 or self.Header != expectedHeader):
+                    if debug.on(debug.Any):
+                        logfile.Write ( \
+    'Retry because short buffer (len=%s) or incorrect header received (expected: %s received: %s)' % \
+                                        (len(data), hex(expectedHeader), hex(self.Header)))
+                    time.sleep(0.1)             # 2020-09-29 short delay @RogerPleijers
+                    retry -= 1
+                else:
+                    break
 
             #-------------------------------------------------------------------
-            # Retry if no correct buffer received
+            # Inform when there's something unexpected
             #-------------------------------------------------------------------
-            if retry and (len(data) < 40 or self.Header != expectedHeader):
-                if debug.on(debug.Any):
-                    logfile.Write ( \
-'Retry because short buffer (len=%s) or incorrect header received (expected: %s received: %s)' % \
-                                    (len(data), hex(expectedHeader), hex(self.Header)))
-                time.sleep(0.1)             # 2020-09-29 short delay @RogerPleijers
-                retry -= 1
+            if len(data) < 40:
+                self.tacxEvent           = False
+                self.USB_ReadErrorCount += 1
+                # 2020-09-29 the buffer is ignored when too short (was processed before)
+                logfile.Console('Tacx head unit returns insufficient data, len=%s' % len(data))
+                if self.clv.PedalStrokeAnalysis:
+                    logfile.Console('To resolve, try to run without Pedal Stroke Analysis.')
+                else:
+                    logfile.Console('To resolve, check all (signal AND power) cabling for loose contacts.')
+                    # 2021-04-29 On Raspberry Pi Zero W this also occurs when the
+                    #            system is too busy. 
+                    #            When the system is less busy (FortiusAnt only active
+                    #            process) then the message disappears automatically.
+                    #            A longer timeout does not help (tried: 100ms).
+
+            elif self.Header != expectedHeader:
+                self.tacxEvent           = False
+                self.USB_ReadErrorCount += 1
+                logfile.Console('Tacx head unit returns incorrect header %s (expected: %s)' % \
+                                            (hex(expectedHeader), hex(self.Header)))
+
+            #-------------------------------------------------------------------
+            # If errors occurred multiple times, try to reconnect the USB device...
+            # There is no timeout here, because it's in a loop itself.
+            #
+            # This path has been tested by unplugging the USB-cable which produces
+            # a heap of errors. After connection, FortiusAnt proceeds nicely.
+            # Issue #446 (presumably hw-error) to be tested and confirmed.
+            #-------------------------------------------------------------------
+            if self.USB_ReadErrorCount > 4:
+                self.USB_ReadErrorCount = 0
+                logfile.Console('Try to reconnect to Tacx head unit')
+                msg, hu, self.UsbDevice, LegacyProtocol = clsTacxTrainer.InitializeUSB(self.Headunit)
+                logfile.Console (msg)
+                # Note that, if dev == False, msg shows what has gone wrong
             else:
                 break
-
-        #-----------------------------------------------------------------------
-        # Inform when there's something unexpected
-        #-----------------------------------------------------------------------
-        if len(data) < 40:
-            self.tacxEvent = False
-            # 2020-09-29 the buffer is ignored when too short (was processed before)
-            logfile.Console('Tacx head unit returns insufficient data, len=%s' % len(data))
-            if self.clv.PedalStrokeAnalysis:
-                logfile.Console('To resolve, try to run without Pedal Stroke Analysis.')
-            else:
-                logfile.Console('To resolve, check all (signal AND power) cabling for loose contacts.')
-                # 2021-04-29 On Raspberry Pi Zero W this also occurs when the
-                #            system is too busy. 
-                #            When the system is less busy (FortiusAnt only active
-                #            process) then the message disappears automatically.
-                #            A longer timeout does not help (tried: 100ms).
-
-        elif self.Header != expectedHeader:
-            self.tacxEvent = False
-            logfile.Console('Tacx head unit returns incorrect header %s (expected: %s)' % \
-                                        (hex(expectedHeader), hex(self.Header)))
-
         return data
 
     #---------------------------------------------------------------------------
@@ -2582,6 +2722,14 @@ class clsTacxLegacyUsbTrainer(clsTacxUsbTrainer):
         self.Operational= True                    # Always true for USB-trainers
         self.SpeedScale = 11.9 # GoldenCheetah: curSpeed = curSpeedInternal / (1.19f * 10.0f);
         #PowerResistanceFactor = (1 / 0.0036)     # GoldenCheetah ~= 277.778
+
+        # ----------------------------------------------------------------------
+        # Steering
+        # ----------------------------------------------------------------------
+        if self.clv.Steering == 'wired':
+            self.SteeringFrame = steering.clsSteering(InitialCalLeft=-25,
+                                                    InitialCalRight=25,
+                                                    DeadZone=7.0)
 
     #---------------------------------------------------------------------------
     # Basic physics: Power = Resistance * Speed  <==> Resistance = Power / Speed
@@ -2754,6 +2902,16 @@ class clsTacxLegacyUsbTrainer(clsTacxUsbTrainer):
         self.Wheel2Speed()
         self.CurrentResistance2Power()
 
+        # ----------------------------------------------------------------------
+        # Steering
+        # ----------------------------------------------------------------------
+        if self.clv.Steering == 'wired':
+            axisNotConnected = 0
+            if self.Axis != axisNotConnected:
+                self.SteeringFrame.Update(self.Axis)
+            else:
+                self.SteeringFrame.Update(None)
+
         if debug.on(debug.Function):
             logfile.Write ("ReceiveFromTrainer() = hr=%s Buttons=%s, Cadence=%s Speed=%s TargetRes=%s CurrentRes=%s CurrentPower=%s, pe=%s %s" % \
                 (  self.HeartRate, self.Buttons, self.Cadence, self.SpeedKmh, self.TargetResistance, self.CurrentResistance, self.CurrentPower, self.PedalEcho, self.Message) \
@@ -2792,6 +2950,14 @@ class clsTacxNewUsbTrainer(clsTacxUsbTrainer):
         self.MotorBrakeUnitType     = 0             # 41 = T1941 (Fortius motorbrake)
                                                     # 01 = T1901 (Magnetic brake)
         self.Version2               = 0
+
+        # ----------------------------------------------------------------------
+        # Steering
+        # ----------------------------------------------------------------------
+        if self.clv.Steering == 'wired':
+            self.SteeringFrame = steering.clsSteering(InitialCalLeft=-100,
+                                                    InitialCalRight=100,
+                                                    DeadZone=7.0)
 
         #---------------------------------------------------------------------------
         # Resistance values for MagneticBrake
@@ -3243,7 +3409,16 @@ class clsTacxNewUsbTrainer(clsTacxUsbTrainer):
             self.Wheel2Speed()
             self.CurrentResistance2Power()
 
-            # print('Steering axis = ', self.Axis) # To investigate steering behaviour
+            # ----------------------------------------------------------------------
+            # Steering
+            # ----------------------------------------------------------------------
+            if self.clv.Steering == 'wired':
+                axisNotConnected = 0x0a0d
+                if self.Axis != axisNotConnected:
+                    # Invert axis value so lower value -> left (not right)
+                    self.SteeringFrame.Update(-self.Axis)
+                else:
+                    self.SteeringFrame.Update(None)
 
             if debug.on(debug.Function):
                 logfile.Write ("ReceiveFromTrainer() = hr=%s Buttons=%s Cadence=%s Speed=%s TargetRes=%s CurrentRes=%s CurrentPower=%s, pe=%s hdr=%s %s" % \

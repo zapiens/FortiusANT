@@ -3,14 +3,17 @@
         "device ID": ""
     },
     "bluetooth": {
-        "enable": false
+        "bless": false,
+        "nodejs": false
     },
     "general": {
         "autostart": true,
         "debug": "",
         "export TCX-file": false,
-        "gui": false,
-        "hrm": ""
+        "gui": true,
+        "home trainer": false,
+        "hrm": "",
+        "imperial": false
     },
     "simulation": {
         "manual grade": false,
@@ -21,7 +24,7 @@
     "trainer": {
         "auto calibrate": true,
         "calibrate rolling resistance": "",
-        "factor": "100",
+        "factor": "20",
         "grade factor": "100",
         "grade factor downhill": "100",
         "pedal stroke analysis": true,
@@ -34,7 +37,7 @@
             "time": "7.0"
         },
         "transmission": "34-50*x34-30-27-25-23-21-19*-17-15-13-11",
-        "type": ""
+        "type": "Bushido"
     },
     "version": "1"
 }

@@ -1,7 +1,12 @@
 #-------------------------------------------------------------------------------
 # Version info
 #-------------------------------------------------------------------------------
-__version__ = "2022-01-14"
+__version__ = "2023-03-13"
+# 2023-12-13    Issue #445: Specifying Vortex interactively has no effect
+# 2023-03-15    Typo in message corrected
+# 2022-08-10    Steering merged from marcoveeneman and switchable's code
+# 2022-03-03    #366 -bb added
+#               -d can be defined as characters
 # 2022-01-14    #363 st7789b added
 # 2021-12-02    default command line value for HRM was False, changed to None
 #                   HRM=0 has another meaning than "HRM not specified"
@@ -115,6 +120,7 @@ class CommandLineVariables(object):
     PowerMode       = False      # introduced 2020-04-10; When specified Grade-commands are ignored xx seconds after Power-commands
     Resistance      = False      # introduced 2020-11-23; When specified, Target Resistance equals Target Power
     StatusLeds      = False      # modified   2020-03-22; When specified, Status Led displayed (GUI / raspberry)
+    Steering        = None       # introduced 2021-11-21; None=no steering, 'wired' or 'Blacktrack'
     CalibrateRR     = False      # introduced 2020-12-07; To calibrate Magnetic Brake power RollingResistance
     scs             = None       # introduced 2020-02-10; None=not specified, numeric=SCS device
     OutputDisplay   = False      # introduced 2021-03-24; Raspberry small display
@@ -207,13 +213,14 @@ class CommandLineVariables(object):
            parser.add_argument('-A', dest='A_IgnoredIfDefined',                         help=argparse.SUPPRESS, required=False, action='store_true')
         if UseBluetooth:
            parser.add_argument('-b', dest='ble',                                        help=constants.help_b,  required=False, action='store_true')
+           parser.add_argument('-bb', dest='bless',                                     help=constants.help_bb, required=False, action='store_true')
         else:
            pass # If -b is requested but not available, then an error is appropriate
         parser.add_argument   ('-B', dest='DeviceNumberBase',   metavar='0...65535',    help=constants.help_B,  required=False, default=None,  type=int)
         parser.add_argument   ('-c', dest='CalibrateRR',        metavar='0...100',      help=constants.help_c,  required=False, default=None,  type=int)
 #       parser.add_argument   ('-C', dest='CtrlCommand',        metavar='ANT+DeviceID', help=constants.help_C,  required=False, default=False, type=int)
         parser.add_argument   ('-C', dest='CtrlCommand',        metavar='ANT+DeviceID', help=argparse.SUPPRESS, required=False, default=False, type=int)
-        parser.add_argument   ('-d', dest='debug',              metavar='0...255',      help=constants.help_d,  required=False, default=None,  type=int)
+        parser.add_argument   ('-d', dest='debug',              metavar='0...65535',    help=constants.help_d,  required=False, default=None)               #type=int
         parser.add_argument   ('-D', dest='antDeviceID',        metavar='USB-DeviceID', help=constants.help_D,  required=False, default=None,  type=int)
         parser.add_argument   ('-e', dest='homeTrainer',                                help=constants.help_e,  required=False, action='store_true')
         #                       -h     help!!
@@ -245,6 +252,9 @@ class CommandLineVariables(object):
         parser.add_argument   ('-R', dest='Runoff',             metavar='see text',     help=constants.help_R,  required=False, default=False)
         parser.add_argument   ('-s', dest='simulate',                                   help=constants.help_s,  required=False, action='store_true')
 #scs    parser.add_argument   ('-S', dest='scs',                metavar='ANT+ DeviceID',help=constants.help_S,  required=False, default=None,  type=int)
+        if UseBluetooth:
+           parser.add_argument('-S', dest='Steering',                                   help=constants.help_S, required=False, \
+                               choices=['wired', 'Blacktrack'])
         parser.add_argument   ('-T', dest='Transmission',       metavar='see text',     help=constants.help_T,  required=False, default=False)
         self.ant_tacx_models = ['Bushido', 'Genius', 'Vortex', 'Magneticbrake', 'Motorbrake']
         parser.add_argument   ('-t', dest='TacxType',                                   help=constants.help_t, required=False, default=False, \
@@ -302,11 +312,13 @@ class CommandLineVariables(object):
         #-----------------------------------------------------------------------
         self.autostart              = self.args.autostart
         if UseBluetooth:
-            self.ble                = self.args.ble
+            self.ble                = self.args.ble         # BLE using NodeJS
+            self.bless              = self.args.bless       # BLE using bless
         if UseGui:
             self.gui                = self.args.gui
         self.homeTrainer            = self.args.homeTrainer # Exersize Bike
-        self.StatusLeds             = self.args.StatusLeds
+        if UseGui or OnRaspberry:
+            self.StatusLeds         = self.args.StatusLeds
         self.imperial               = self.args.imperial
         self.manual                 = self.args.manual
         self.manualGrade            = self.args.manualGrade
@@ -324,13 +336,17 @@ class CommandLineVariables(object):
         if self.manualGrade:    i += 1
 
         if i > 1:
-            logfile.Console("Only one of -h, -m and -M may be specified; manual power selected")
+            logfile.Console("Only one of -e, -m and -M may be specified; manual power selected")
             self.homeTrainer = False
             self.manual      = True
             self.manualGrade = False
 
         if (self.homeTrainer or self.manual or self.manualGrade) and self.SimulateTrainer:
             logfile.Console("-e/-m/-M and -s both specified, most likely for program test purpose")
+
+        if self.ble and self.bless:
+            logfile.Console("-b and -bb both specified, -bb is selected")
+            self.ble = False
 
         #-----------------------------------------------------------------------
         # Get DeviceNumberBase
@@ -442,7 +458,29 @@ class CommandLineVariables(object):
             try:
                 self.debug = int(self.args.debug)
             except:
-                logfile.Console('Command line error; -d incorrect debugging flags=%s' % self.args.debug)
+                #logfile.Console('Command line error; -d incorrect debugging flags=%s' % self.args.debug)
+
+                self.debug = 0
+                if 'log' in self.args.debug.lower():                        # Not case-sensitive
+                    self.debug = debug.All - debug.LogfileJson
+                    
+                if 'all' in self.args.debug.lower():
+                    self.debug = debug.All                                  # Not case-sensitive
+
+                if 'A' in self.args.debug: self.debug |= debug.Application
+                if 'f' in self.args.debug: self.debug |= debug.Function
+                if 'a' in self.args.debug: self.debug |= debug.Data1
+                if 'u' in self.args.debug: self.debug |= debug.Data2
+                if 'm' in self.args.debug: self.debug |= debug.MultiProcessing
+                if 'j' in self.args.debug: self.debug |= debug.LogfileJson
+                if 'b' in self.args.debug: self.debug |= debug.Ble
+                if 'p' in self.args.debug: self.debug |= debug.Performance
+
+                if 'D' in self.args.debug: self.debug |= debug.logging_DEBUG
+                if 'I' in self.args.debug: self.debug |= debug.logging_INFO
+                if 'W' in self.args.debug: self.debug |= debug.logging_WARNING
+                if 'E' in self.args.debug: self.debug |= debug.logging_ERROR
+                if 'C' in self.args.debug: self.debug |= debug.logging_CRITICAL
 
         #-----------------------------------------------------------------------
         # Get antDeviceID
@@ -555,32 +593,33 @@ class CommandLineVariables(object):
         #-----------------------------------------------------------------------
         # Get TacxType
         #-----------------------------------------------------------------------
-        AntRequired = False
-        if self.args.TacxType:
-            self.TacxType = self.args.TacxType
-            if 'Vortex' in self.TacxType:
-                self.Tacx_Vortex  = True
-                self.Tacx_Cadence = False
-                AntRequired = True
-            elif 'Genius' in  self.TacxType:
-                self.Tacx_Genius  = True
-                self.Tacx_Cadence = False
-                AntRequired = True
-            elif 'Bushido' in self.TacxType:
-                self.Tacx_Bushido = True
-                self.Tacx_Cadence = False
-                AntRequired = True
-            elif 'Magneticbrake' in self.TacxType:
-                self.Tacx_Magneticbrake = True
-            elif 'Motorbrake' in self.TacxType:
-                self.Tacx_MotorBrake = True
-            else:
-                logfile.Console('Command line error; -t incorrect value=%s' % self.args.TacxType)
-                self.args.TacxType = False
+        AntRequired = self.SetTacxType(self.args.TacxType)
 
         if AntRequired and self.antDeviceID == -1:
             logfile.Console('You have selected an ANT-trainer (-t %s) and de-selected ANT-dongle (-D-1); -D-1 ignored.' % self.TacxType)
             self.antDeviceID = None
+
+        #-----------------------------------------------------------------------
+        # Get Steering
+        # Steering depends on USB-trainer (wired) or ANT (blacktrack) and BLE.
+        # If conflicting, Steering will be set to none.
+        # [As opposed to modifying the other options, Steering depends on them]
+        #-----------------------------------------------------------------------
+        if UseBluetooth:
+            self.Steering = self.args.Steering
+
+            if self.Steering == 'wired' and (self.Tacx_Genius or self.Tacx_Bushido or self.Tacx_Vortex):
+                logfile.Console("Wired steering (-S wired) not available on with ANT-trainer (-t %s); -S wired ignored." % self.TacxType)
+                self.Steering = None
+
+            if self.Steering is not None and not (self.ble or self.bless):
+                logfile.Console("Steering enabled without Bluetooth, ignored")
+                self.Steering = None
+
+            if self.Steering == 'Blacktrack' and self.antDeviceID == -1:
+                logfile.Console(
+                    'BlackTrack steering (-S Blacktrack) enabled, but de-selected ANT-dongle (-D-1), ignored.')
+                self.Steering = None
 
         #-----------------------------------------------------------------------
         # Get Transmission
@@ -654,17 +693,70 @@ class CommandLineVariables(object):
             logfile.Console("Pedal stroke analysis is not possible in console mode or this Tacx type")
             self.PedalStrokeAnalysis = False
 
+    #---------------------------------------------------------------------------
+    # S e t T a c x T y p e
+    #---------------------------------------------------------------------------
+    # Input         newTacxType
+    #
+    # Function      Check provided newTacxType and set required values
+    #               Originally inline code from where called in __init__()
+    #                   but aditionally required in settings.py (issue #445).
+    #
+    # Output        TacxType, Tacx_Vortex/Tacx_Bushido/... and Tacx_Cadence
+    #
+    # Returns       whether an ANT interface is required
+    #---------------------------------------------------------------------------
+    def SetTacxType(self, newTacxType):
+        AntRequired             = False
+
+        self.TacxType           = False     # As copied from declaration
+        self.Tacx_Vortex        = False     # may be changed interactively!
+        self.Tacx_Genius        = False
+        self.Tacx_Bushido       = False
+        self.Tacx_MotorBrake    = False
+        self.Tacx_MagneticBrake = False
+        self.Tacx_Cadence       = True
+
+        if newTacxType:                     # It's NOT False or ''
+            self.TacxType = newTacxType
+            if 'Vortex' in self.TacxType:
+                self.Tacx_Vortex  = True
+                self.Tacx_Cadence = False
+                AntRequired = True
+            elif 'Genius' in  self.TacxType:
+                self.Tacx_Genius  = True
+                self.Tacx_Cadence = False
+                AntRequired = True
+            elif 'Bushido' in self.TacxType:
+                self.Tacx_Bushido = True
+                self.Tacx_Cadence = False
+                AntRequired       = True
+            elif 'Magneticbrake' in self.TacxType:
+                self.Tacx_Magneticbrake = True
+            elif 'Motorbrake' in self.TacxType:
+                self.Tacx_MotorBrake = True
+            else:
+                logfile.Console('Command line error; -t incorrect value=%s' % newTacxType)
+                self.args.TacxType = False
+        return AntRequired
+
+    #---------------------------------------------------------------------------
+    # p r i n t
+    #---------------------------------------------------------------------------
+    # Function      Print all command-line settings
+    #---------------------------------------------------------------------------
     def print(self):
         try:
             v = self.debug                          # Verbose: print all command-line variables with values
             if      self.autostart:                     logfile.Console("-a")
             if      self.PedalStrokeAnalysis:           logfile.Console("-A")
             if      self.ble:                           logfile.Console("-b")
+            if      self.bless:                         logfile.Console("-bb")
             if v or self.args.DeviceNumberBase != None: logfile.Console("-B %s" % self.DeviceNumberBase )
             if v or self.args.CalibrateRR != None:      logfile.Console("-c %s" % self.CalibrateRR )
             if v or self.CTRL_SerialL or self.CTRL_SerialR:
                 logfile.Console("-C %s/%s" % (self.CTRL_SerialL, self.CTRL_SerialR ) )
-            if v or self.args.debug != None:            logfile.Console("-d %s (%s)" % (self.debug, bin(self.debug) ) )
+            if v or self.args.debug != None:            logfile.Console("-d %s (%s, %s)" % (self.args.debug, self.debug, bin(self.debug) ) )
             if v or self.args.antDeviceID != None:      logfile.Console("-D %s" % self.antDeviceID )
             if v or self.args.GradeAdjust:
                 if self.GradeAdjust == 1:               logfile.Console("-G defines Grade = antGrade * %s" \
@@ -691,6 +783,7 @@ class CommandLineVariables(object):
                         (self.RunoffMaxSpeed, self.RunoffDip, self.RunoffMinSpeed, self.RunoffTime, self.RunoffPower) )
             if      self.args.simulate:                 logfile.Console("-s")
 #scs        if v or self.args.scs != None:              logfile.Console("-S %s" % self.scs )
+            if      self.args.Steering is not None:     logfile.Console("-S %s" % self.args.Steering)
             if v or self.args.TacxType:                 logfile.Console("-t %s" % self.TacxType)
             if v or self.args.Transmission:
                                                         logfile.Console('-T %s x %s (start=%sx%s)' % \

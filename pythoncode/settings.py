@@ -1,7 +1,22 @@
 #-------------------------------------------------------------------------------
 # Version info
 #-------------------------------------------------------------------------------
-__version__ = "2021-04-13"
+__version__ = "2023-12-13"
+# 2023-12-13    Issue #445: Specifying Vortex interactively has no effect
+#               Incorrect values typed in combobxo, replaced with '' without
+#               further notice.
+# 2022-12-28    PowerFactor limit changed to 0.2 ... 1.5 (20 ... 150)
+#               to correspond with FortiusAntCommand.py
+#               See also 2021-01-19
+# 2022-12-28    Default values changed; see also 2022-04-11.
+# 2022-08-10    Steering merged from marcoveeneman and switchable's code
+# 2022-04-15    The new flags for debugging (performance, logging) are not
+#               translated to the user-interface.
+#               - maximum value for debug=127
+#               - no checkboxes for performance and logging_
+#               Left for future improvement, most likely nobody will miss it.
+# 2022-04-11    issue #373 solved; value = '' must be changed to None
+#               issue #366 bless flag added
 # 2021-04-13    added: -i, leds renamed into StatusLeds
 # 2021-03-02    added: -l Raspberry status Leds
 # 2021-02-11    added: -e homeTrainer
@@ -47,6 +62,7 @@ json_gui                = 'gui'
 json_leds               = 'leds'
 json_homeTrainer        = 'home trainer'      # User function, although technically like simulation
 json_hrm                = 'hrm'
+json_steering           = 'steering'
 json_imperial           = 'imperial'
 #json_scs               = 'scs'
 json_exportTCX          = 'export TCX-file'
@@ -58,7 +74,9 @@ json_Resistance         = 'resistance'
 json_simulate           = 'simulate'
 
 json_Bluetooth          = 'bluetooth'
-json_ble                = 'enable'
+json_ble                = 'enable'            # initial implementation with node.js only, for compatibility
+json_nodejs             = 'nodejs'
+json_bless              = 'bless'
 
 json_Ant                = 'ant'
 json_antDeviceID        = 'device ID'
@@ -144,14 +162,29 @@ def ReadJsonFile (args):
         else:
             # ------------------------------------------------------------------
             # Handle content AND check for unknown/incorrectly spelled params.
+            #
+            # p = group of parameters (general, ant, ...)
+            # q = the parameters in the group
+            # r = sub-parameters, if applicable
+            #
+            # w = data[p] = all parameters and their values in the group
+            # w[q]        = the value of parameter q in group p
+            #               and could have been written as data[p][q]
             # ------------------------------------------------------------------
             ActualVersion   = -1
             G               = 0
             R               = 0
+
             for p in data:
-                w = data[p]
-                if   p == json_Ant:
+                w = data[p]                         # shorthand for data[p]                       
+
+                if type(w) == type({}):             # Issue #373
                     for q in w:
+                        if w[q] == '':              # If no value defined in json
+                            w[q] = None             # then None is expected by FortiusAndCommand.py
+
+                if   p == json_Ant:
+                    for q in data[json_Ant]:
                         if   q == json_antDeviceID:         args.antDeviceID          = w[q]
                         #'CtrlCommand':                   args.CtrlCommand
                         #'scs':                           args.scs                  = p[q]
@@ -159,7 +192,9 @@ def ReadJsonFile (args):
 
                 elif p == json_Bluetooth:
                     for q in data[json_Bluetooth]:
-                        if   q == json_ble:                 args.ble                  = w[q]
+                        if   q == json_ble:                 args.ble                  = w[q]    # For compatibility
+                        elif q == json_nodejs:              args.ble                  = w[q]
+                        elif q == json_bless:               args.bless                = w[q]
                         else: logfile.Console ('Json file contains unknown parameter %s %s' % (p, q))
 
                 elif p == json_General:
@@ -170,6 +205,7 @@ def ReadJsonFile (args):
                         elif q == json_gui:                 args.gui                  = w[q]
                         elif q == json_homeTrainer:         args.homeTrainer          = w[q]
                         elif q == json_hrm:                 args.hrm                  = w[q]
+                        elif q == json_steering:            args.Steering             = w[q]
                         elif q == json_imperial:            args.imperial             = w[q]
                         elif q == json_leds:                args.StatusLeds           = w[q]
                         else: logfile.Console ('Json file contains unknown parameter %s %s' % (p, q))
@@ -212,11 +248,15 @@ def ReadJsonFile (args):
 
             # ------------------------------------------------------------------
             # Correct values, to be compatibel with command-line
+            # Issue#404; when default value specified wrong behaviour
+            # 2022-12-28: Now the same values (None, False) used as the default=
+            #             values in FortiusAntCommand.py
             # ------------------------------------------------------------------
-            if args.debug       == '':    args.debug        = False
-            if args.antDeviceID == '':    args.antDeviceID  = False
-            if args.factor      == '100': args.factor       = False
+            if args.debug       == '':    args.debug        = None
+            if args.antDeviceID == '':    args.antDeviceID  = None
+            if args.factor      == '':    args.factor       = None
             if args.TacxType    == '':    args.TacxType     = False
+            if args.Steering    == '':    args.Steering     = False
 
             # ------------------------------------------------------------------
             # Warn for (possibly) incompatible json-file
@@ -343,6 +383,7 @@ if constants.UseGui:
             json_gui:                   DialogWindow.cb_g   .GetValue(),
             json_homeTrainer:           DialogWindow.cb_e   .GetValue(),
             json_hrm:                   DialogWindow.txt_H  .GetValue(),
+            json_steering:              DialogWindow.combo_S.GetValue(),
             json_imperial:              DialogWindow.cb_i   .GetValue(),
             #'scs':                     DialogWindow.txt_S  .GetValue(),
             json_exportTCX:             DialogWindow.cb_x   .GetValue(),
@@ -356,7 +397,9 @@ if constants.UseGui:
         }
 
         data[json_Bluetooth] = {
-            json_ble:                   DialogWindow.cb_b   .GetValue(),
+            #json_ble is not written anymore since #366
+            json_nodejs:                DialogWindow.cb_b   .GetValue(),
+            json_bless:                 DialogWindow.cb_bb  .GetValue(),
         }
 
         data[json_Ant] = {
@@ -481,6 +524,26 @@ if constants.UseGui:
         event.Skip()
 
     # ------------------------------------------------------------------------------
+    # E V T _ K I L L _ F O C U S _ c o m b o b o x
+    # ------------------------------------------------------------------------------
+    # input:        KILL_FOCUS event on a combo box
+    #               ValueWhenUnknown: '' by default, more elegant solution for future.
+    #
+    # Description:  Check whether the field is allowed
+    #               
+    # Returns:      KILL_FOCUS is always allowed
+    # ------------------------------------------------------------------------------
+    def EVT_KILL_FOCUS_combobox (control, event, ValueWhenUnknown=''):
+        ok = False
+        for i in range(0, control.Count):
+            if control.GetValue() == control.GetString(i):
+                ok = True
+                break
+        if not ok:
+            control.SetValue(ValueWhenUnknown)
+        event.Skip()
+
+    # ------------------------------------------------------------------------------
     # E V T _ C H A R _ f l o a t
     # ------------------------------------------------------------------------------
     # input:        CHAR event on an TextCtrl (some character entered)
@@ -559,9 +622,15 @@ if constants.UseGui:
             self.cb_b = wx.CheckBox(panel, id=wx.ID_ANY, label=l, pos=p, size=s, style=0, validator=wx.DefaultValidator, name=wx.CheckBoxNameStr)
             self.cb_b.Bind(wx.EVT_CHECKBOX, self.EVT_CHECKBOX_cb_b)
             
-            l = constants.help_g + " (-g *)"
+            l = constants.help_bb + " (-bb *)"
             s = (-1, -1)
             p = Under(self.cb_b)
+            self.cb_bb = wx.CheckBox(panel, id=wx.ID_ANY, label=l, pos=p, size=s, style=0, validator=wx.DefaultValidator, name=wx.CheckBoxNameStr)
+            self.cb_bb.Bind(wx.EVT_CHECKBOX, self.EVT_CHECKBOX_cb_bb)
+            
+            l = constants.help_g + " (-g *)"
+            s = (-1, -1)
+            p = Under(self.cb_bb)
             self.cb_g = wx.CheckBox(panel, id=wx.ID_ANY, label=l, pos=p, size=s, style=0, validator=wx.DefaultValidator, name=wx.CheckBoxNameStr)
             self.cb_g.Bind(wx.EVT_CHECKBOX, self.EVT_CHECKBOX_cb_g)
             
@@ -583,7 +652,9 @@ if constants.UseGui:
             c = clv.ant_tacx_models
             if True:                # Required?? platform.system() in [ 'Windows' ]:
                 self.combo_t = wx.ComboBox(panel, id=wx.ID_ANY, value=v, pos=p, size=s, choices=c, style=0, validator=wx.DefaultValidator, name=wx.ComboBoxNameStr)
-                self.combo_t.Bind(wx.EVT_COMBOBOX, self.EVT_COMBOBOX_combo_t)
+                self.combo_t.Bind(wx.EVT_COMBOBOX,   self.EVT_COMBOBOX_combo_t)
+                self.combo_t.Bind(wx.EVT_CHAR,       self.EVT_CHAR_combo_t)          # Issue #445
+                self.combo_t.Bind(wx.EVT_KILL_FOCUS, self.EVT_KILL_FOCUS_combo_t)
             else:
                 self.combo_t = wx.ListBox(panel, id=wx.ID_ANY, pos=p, size=s, choices=c, style=0, validator=wx.DefaultValidator, name=wx.ListBoxNameStr)
                 self.combo_t.Bind(wx.EVT_LISTBOX, self.EVT_COMBOBOX_combo_t)
@@ -593,12 +664,26 @@ if constants.UseGui:
             p = RightOf(self.combo_t)
             self.lbl_t = wx.StaticText(panel, id=wx.ID_ANY, label=l, pos=p, size=s, style=0, name=wx.StaticTextNameStr)
             
+            v = ""
+            s = (-1, -1)
+            p = Under(self.combo_t)
+            c = ['wired', 'Blacktrack']
+            self.combo_S = wx.ComboBox(panel, id=wx.ID_ANY, value=v, pos=p, size=s, choices=c, style=0, validator=wx.DefaultValidator, name=wx.ComboBoxNameStr)
+            self.combo_S.Bind(wx.EVT_COMBOBOX,   self.EVT_COMBOBOX_combo_S)
+            self.combo_S.Bind(wx.EVT_CHAR,       self.EVT_CHAR_combo_S)          # Analogue to combo_t (Issue #445)
+            self.combo_S.Bind(wx.EVT_KILL_FOCUS, self.EVT_KILL_FOCUS_combo_S)
+
+            l = constants.help_S + " (-S *)"
+            s = (-1, -1)
+            p = RightOf(self.combo_S)
+            self.lbl_S = wx.StaticText(panel, id=wx.ID_ANY, label=l, pos=p, size=s, style=0, name=wx.StaticTextNameStr)
+
             # ----------------------------------------------------------------------
             # POWER CURVE
             # ----------------------------------------------------------------------
             l = "Power curve adjustment:"
             s = (-1, -1)
-            p = Under(self.combo_t, 15)
+            p = Under(self.combo_S, 15)
             self.lblPower = wx.StaticText(panel, id=wx.ID_ANY, label=l, pos=p, size=s, style=wx.BOLD, name=wx.StaticTextNameStr)
             self.lblPower.SetFont(GroupLabelFont)
 
@@ -901,6 +986,7 @@ if constants.UseGui:
                 self.cb_a   .SetValue(clv.autostart)
                 self.cb_A   .SetValue(clv.PedalStrokeAnalysis)
                 self.cb_b   .SetValue(clv.ble)
+                self.cb_bb  .SetValue(clv.bless)
                 self.txt_d  .SetValue(str(clv.debug))
                 self.EVT_KILL_FOCUS_txt_d()
                 self.cb_g   .SetValue(clv.gui)
@@ -923,12 +1009,13 @@ if constants.UseGui:
             #self.txt_S  .SetValue(clv.scs)
                 self.cb_x   .SetValue(clv.exportTCX)
 
-                if clv.antDeviceID:     self.txt_D  .SetValue(str(clv.antDeviceID))
-                if clv.hrm:             self.txt_H  .SetValue(str(clv.hrm))
-                if clv.CalibrateRR:     self.txt_c  .SetValue(str(float(clv.CalibrateRR)))
-                if clv.TacxType:        self.combo_t.SetValue(str(clv.TacxType))
+                if clv.antDeviceID:          self.txt_D  .SetValue(str(clv.antDeviceID))
+                if clv.hrm:                  self.txt_H  .SetValue(str(clv.hrm))
+                if clv.CalibrateRR:          self.txt_c  .SetValue(str(float(clv.CalibrateRR)))
+                if clv.TacxType:             self.combo_t.SetValue(str(clv.TacxType))
+                if clv.Steering is not None: self.combo_S.SetValue(str(clv.Steering))
 
-                if not clv.args.debug:  self.txt_d  .SetValue('')   # make difference between 0 and not-specified
+                if not clv.args.debug:       self.txt_d  .SetValue('')   # make difference between 0 and not-specified
 
         # --------------------------------------------------------------------------
         # E V E N T   H A N D L E R S
@@ -949,6 +1036,14 @@ if constants.UseGui:
         # --------------------------------------------------------------------------
         def EVT_CHECKBOX_cb_b (self, event):
             self.cb_restart.SetValue(True)
+            if self.cb_b.GetValue(): self.cb_bb.SetValue(False)
+            
+        # --------------------------------------------------------------------------
+        # Checkbox -bb
+        # --------------------------------------------------------------------------
+        def EVT_CHECKBOX_cb_bb (self, event):
+            self.cb_restart.SetValue(True)
+            if self.cb_bb.GetValue(): self.cb_b.SetValue(False)
             
         # --------------------------------------------------------------------------
         # Checkbox -d
@@ -1049,7 +1144,7 @@ if constants.UseGui:
         # Checkbox -p
         # --------------------------------------------------------------------------
         def EVT_KILL_FOCUS_txt_p (self, event):
-            EVT_KILL_FOCUS_int_range(self.txt_p, event, 50, 150, 100)
+            EVT_KILL_FOCUS_int_range(self.txt_p, event, 20, 150, 100)   # 2022-12-28
             
         # --------------------------------------------------------------------------
         # Checkbox -R
@@ -1080,6 +1175,34 @@ if constants.UseGui:
         # --------------------------------------------------------------------------
         def EVT_COMBOBOX_combo_t (self, event):
             self.cb_restart.SetValue(True)
+
+        def EVT_CHAR_combo_t (self, event):     # Issue #445
+            self.cb_restart.SetValue(True)
+
+            event.Skip()               # Accept this CHAR for default processing
+                                       # Typing correct values checked on KILL FOCUS
+
+            return
+
+        def EVT_KILL_FOCUS_combo_t (self, event):
+            EVT_KILL_FOCUS_combobox (self.combo_t, event)
+
+        # --------------------------------------------------------------------------
+        # Combobox -S
+        # --------------------------------------------------------------------------
+        def EVT_COMBOBOX_combo_S (self, event):
+            self.cb_restart.SetValue(True)
+
+        def EVT_CHAR_combo_S (self, event):     # Analogue to combo_t  (Issue #445)
+            self.cb_restart.SetValue(True)
+
+            event.Skip()               # Accept this CHAR for default processing
+                                       # Typing correct values checked on KILL FOCUS
+
+            return
+
+        def EVT_KILL_FOCUS_combo_S (self, event):
+            EVT_KILL_FOCUS_combobox (self.combo_S, event)
 
         # --------------------------------------------------------------------------
         # Checkbox -restart
@@ -1136,6 +1259,7 @@ if constants.UseGui:
                 clv.autostart           = self.cb_a.GetValue()
                 clv.PedalStrokeAnalysis = self.cb_A.GetValue()
                 clv.ble                 = self.cb_b.GetValue()
+                clv.bless               = self.cb_bb.GetValue()
                 clv.gui                 = self.cb_g.GetValue()
 
                 if self.txt_d.GetValue() == '':
@@ -1153,10 +1277,12 @@ if constants.UseGui:
                 else:
                     clv.hrm             = int(self.txt_H.GetValue())
 
-                if self.combo_t.GetValue() == '':
-                    clv.TacxType        = False
+                clv.SetTacxType ( self.combo_t.GetValue() )             # Issue #445
+
+                if self.combo_S.GetValue() == '':
+                    clv.Steering        = None
                 else:
-                    clv.TacxType        = self.combo_t.GetValue()
+                    clv.Steering        = self.combo_S.GetValue()
 
             # ----------------------------------------------------------------------
             # Store values in json file

@@ -1,7 +1,10 @@
 #-------------------------------------------------------------------------------
 # Version info
 #-------------------------------------------------------------------------------
-__version__ = "2021-04-29"
+__version__ = "2023-03-17"
+# 2023-03-17    #422 importlib not found; ignore that issue
+# 2022-11-19    importlib_metadata_version used to print bless.version
+# 2022-03-08    bleBless, bleBlessClass added
 # 2021-04-29    If no hrm used (-H-1) thgen do not show on console.
 #               Leds shown on console
 # 2021-03-22    Added; SetLeds
@@ -30,6 +33,10 @@ import constants                        #  for __version__
 
 import argparse
 from datetime                           import datetime
+try:
+    from importlib.metadata             import version  as importlib_metadata_version
+except:
+    pass
 import multiprocessing
 import numpy
 import pickle
@@ -42,11 +49,14 @@ import threading
 import time
 import usb.core
 
+import antCTRL
 import antDongle            as ant
 import antHRM               as hrm
 import antFE                as fe
 import antPWR               as pwr
 import antSCS               as scs
+import bleBless
+import bleBlessClass
 import bleDongle
 import debug
 import logfile
@@ -600,11 +610,14 @@ def mainProgram():
         logfile.Write(githubWindowTitle())
         s = " %20s = %s"
         logfile.Write(s % ('FortiusAnt',                    __version__ ))
+        logfile.Write(s % ('antCTRL',               antCTRL.__version__ ))
         logfile.Write(s % ('antDongle',                 ant.__version__ ))
         logfile.Write(s % ('antFE',                      fe.__version__ ))
         logfile.Write(s % ('antHRM',                    hrm.__version__ ))
         logfile.Write(s % ('antPWR',                    pwr.__version__ ))
         logfile.Write(s % ('antSCS',                    scs.__version__ ))
+        logfile.Write(s % ('bleBless',             bleBless.__version__ ))
+        logfile.Write(s % ('bleBlessClass',   bleBlessClass.__version__ ))
         logfile.Write(s % ('bleDongle',           bleDongle.__version__ ))
         logfile.Write(s % ('constants',           constants.__version__ ))
         logfile.Write(s % ('debug',                   debug.__version__ ))
@@ -621,7 +634,16 @@ def mainProgram():
         logfile.Write(s % ('TCXexport',           TCXexport.__version__ ))
         logfile.Write(s % ('usbTrainer',         usbTrainer.__version__ ))
 
+        # See https://github.com/kevincar/bless/issues/98
+        # importlib_metadata_version("modulename")
+        #       does not work for argparse, binascii, math or os
+        #       but works for bless and numpy
+        #   I did not try them all.
         logfile.Write(s % ('argparse',             argparse.__version__ ))
+        try:
+            logfile.Write(s % ('bless',    importlib_metadata_version("bless") ))
+        except:
+            pass
     #   logfile.Write(s % ('binascii',             binascii.__version__ ))
     #   logfile.Write(s % ('math',                     math.__version__ ))
         logfile.Write(s % ('numpy',                   numpy.__version__ ))

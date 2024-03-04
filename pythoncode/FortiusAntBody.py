@@ -1,7 +1,17 @@
 #-------------------------------------------------------------------------------
 # Version info
 #-------------------------------------------------------------------------------
-__version__ = "2022-01-13"
+__version__ = "2024-01-19"
+# 2024-01-19    #381/1  ANT/Remote buttons are processed twice
+#               #381/2  ANT/Remote has four buttons, but 3 are implemented
+#               #381/3  Additional datapage implemented for HRM
+#               #381/4  HRM set to zero when no signal for 5 seconds
+#               #381/5  HRM transmitted to FE-C
+# 2022-08-22    AntDongle stores received messages in a queue.
+# 2022-08-10    Steering merged from marcoveeneman and switchable's code
+# 2022-05-12    Message added on failing calibration
+# 2022-04-07    BLE disabled on error to avoid repeated error-messages
+# 2022-03-01    #366 Implement BLE using bless
 # 2022-01-13    #362 Grade was not adjusted by the -G parameter for BLE
 # 2021-04-29    HRM message if no ANT/TAcx used
 # 2021-04-18    Tacx message displayed (on console) when changed, was suppressed
@@ -242,9 +252,11 @@ import constants
 import debug
 import logfile
 import raspberry
+import steering
 import TCXexport
 import usbTrainer
 
+import bleBless
 import bleDongle
 
 PrintWarnings = False   # Print warnings even when logging = off
@@ -262,7 +274,22 @@ def Initialize(pclv):
     rpi         = raspberry.clsRaspberry(clv)
     rpi.DisplayState(constants.faStarted)
     if clv.exportTCX: tcx = TCXexport.clsTcxExport()
-    bleCTP = bleDongle.clsBleCTP(clv)
+
+    # --------------------------------------------------------------------------
+    # Create Bluetooth Low Energy interface
+    # --------------------------------------------------------------------------
+    if clv.bless:
+        clv.ble = True                          # Since this is the only place
+                                                # where .bless is used!!
+        bleCTP  = bleBless.clsFTMS_bless(True)  # bless implementation
+
+    elif clv.ble:
+        bleCTP = bleDongle.clsBleCTP(clv)       # nodejs implementation
+
+    else:
+        bleCTP =  bleBless.clsFTMS_bless(False) # Create data structure,
+                                                # e.g. so that .Message exists
+                                                # No methods may be called
 
 # ------------------------------------------------------------------------------
 # The opposite, hoping that this will properly release USB device, see #203
@@ -708,6 +735,7 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
     HeartRate       = 0         # This field is displayed
                                 # We have two sources: the trainer or
                                 # our own HRM slave channel.
+    HeartRateTime   = 0         # #381/4 Last time that heartrate is updated
     #Cadence        = 0         # Analogously for Speed Cadence Sensor
                                 # But is not yet implemented
     #---------------------------------------------------------------------------
@@ -807,6 +835,19 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
         #-------------------------------------------------------------------
         AntDongle.CTRL_ChannelConfig(ant.DeviceNumber_CTRL)
 
+    BlackTrack = None
+    if clv.Steering == 'Blacktrack':
+        # -------------------------------------------------------------------
+        # Create ANT slave channel for BLTR (Tacx BlackTrack)
+        # -------------------------------------------------------------------
+        AntDongle.SlaveBLTR_ChannelConfig(0)
+        BlackTrack = steering.clsBlackTrack(AntDongle)
+        Steering = BlackTrack.Steering
+    elif clv.Steering == 'wired':
+        Steering = TacxTrainer.SteeringFrame
+    else:
+        Steering = None
+
     AntDongle.ConfigMsg = False # Displayed only once
 
     if not clv.gui: logfile.Console ("Ctrl-C to exit")
@@ -881,11 +922,12 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
             # First reading on 'my' Fortius shows a positive number, then goes negative
             # so ignore the first x readings before deciding it will not work.
             #-------------------------------------------------------------------
-            # print(StartPedaling, SpeedKmh, CurrentResistance)
+            # print("StartPedaling=%s SpeedKmh=%s CurrentResistance=%s (negative expected)" % (StartPedaling, TacxTrainer.SpeedKmh, TacxTrainer.CurrentResistance))
             if TacxTrainer.CurrentResistance > 0:
                 Counter += 1
                 if Counter == 10:
                     logfile.Console('Calibration stopped because of unexpected resistance value')
+                    logfile.Console('A reason may be that the tyre pressure is incorrect')
                     break
 
             if TacxTrainer.CurrentResistance < 0 and TacxTrainer.SpeedKmh > 0:
@@ -971,6 +1013,10 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
         if clv.ble:
             bleCTP.Open()                   # Open connection with Bluetooth CTP
             FortiusAntGui.SetMessages(Dongle=AntDongle.Message + bleCTP.Message + manualMsg)
+            if not bleCTP.OK:
+                logfile.Console('* * Bluetooth interface disabled * * ')
+                clv.ble = False
+
         if clv.manualGrade:
             TacxTrainer.SetGrade(0)
         else:
@@ -1016,6 +1062,11 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
     ActivationMsg = '---------- %sdevices are activated ----------' % s
     if not Restart:
         logfile.Console (ActivationMsg)
+
+    #---------------------------------------------------------------------------
+    # NOTE: If MAY BE that there is not an ANT nor BLE interface active and we 
+    #      still continue. This exception is not handled and we continue "idle".
+    #---------------------------------------------------------------------------
 
     #---------------------------------------------------------------------------
     # Our main loop!
@@ -1097,8 +1148,17 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
             # If NO HRM defined, use the HeartRate from the trainer
             #-------------------------------------------------------------------
             if clv.hrm == None:
-                HeartRate = TacxTrainer.HeartRate
-                # print('Use heartrate from trainer', HeartRate)
+                HeartRate     = TacxTrainer.HeartRate
+                HeartRateTime = time.time()                   #381/4
+                # logfile.Console('Use heartrate from trainer %d' % HeartRate)
+
+            #-------------------------------------------------------------------
+            # #381/4 If NO HeartRate received, set to 0
+            #-------------------------------------------------------------------
+            if HeartRate and (time.time() - HeartRateTime) > 5:
+                # logfile.Console('No Heartrate received for 5 seconds')
+                HeartRate     = 0
+                HeartRateTime = 0
             
             #-------------------------------------------------------------------
             # Show actual status; once for the GUI, once for Raspberry
@@ -1161,6 +1221,11 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
                     if   ctrl_CommandNr == ctrl.MenuUp:     TacxTrainer.Buttons = usbTrainer.UpButton
                     elif ctrl_CommandNr == ctrl.MenuDown:   TacxTrainer.Buttons = usbTrainer.DownButton
                     elif ctrl_CommandNr == ctrl.MenuSelect: TacxTrainer.Buttons = usbTrainer.OKButton
+
+                    # krusty82 #381/2 suggests to replace the last line by:
+                    #elif ctrl_CommandNr == ctrl.MenuSelect: TacxTrainer.Buttons = usbTrainer.CancelButton
+                    #elif ctrl_CommandNr == ctrl.Start:      TacxTrainer.Buttons = usbTrainer.OKButton
+
                     ctrl_CommandNr = ctrl.NoAction
 
                 #-------------------------------------------------------------------
@@ -1250,7 +1315,7 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
                                 CrancksetIndex = 0
 
                 else:                                                   pass
-
+                TacxTrainer.Buttons = 0       #381/1 Buttons processed, so reset
             #-------------------------------------------------------------------
             # Calculate Reduction
             #
@@ -1324,10 +1389,13 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
 
                 #---------------------------------------------------------------
                 # Broadcast TrainerData message to the CTP (Trainer Road, ...)
+                # #381/5 The heartrate that is displayed (HeartRate) is transmitted
+                #      to FE-C; this is either from HRM or Trainer.
+                #      Initially, TacxTrainer.HeartRate was always used.
                 #---------------------------------------------------------------
                 # print('fe.BroadcastTrainerDataMessage', Cadence, CurrentPower, SpeedKmh, HeartRate)
                 messages.append(fe.BroadcastTrainerDataMessage (TacxTrainer.Cadence, \
-                    TacxTrainer.CurrentPower, TacxTrainer.SpeedKmh, TacxTrainer.HeartRate))
+                    TacxTrainer.CurrentPower, TacxTrainer.SpeedKmh, HeartRate))
 
                 #---------------------------------------------------------------
                 # Send/receive to Bluetooth interface
@@ -1339,6 +1407,10 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
                     bleCTP.SetAthleteData(HeartRate)
                     bleCTP.SetTrainerData(TacxTrainer.SpeedKmh, \
                                     TacxTrainer.Cadence, TacxTrainer.CurrentPower)
+
+                    if Steering is not None:
+                        bleCTP.SetSteeringAngle(Steering.Angle)
+
                     if bleCTP.Refresh():
                         bleEvent = True
                         CTPcommandTime = time.time()
@@ -1367,7 +1439,7 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
             # Broadcast and receive ANT+ responses
             #-------------------------------------------------------------------
             if len(messages) > 0:
-                data = AntDongle.Write(messages, True, False, flush)
+                AntDongle.Write(messages, True, False, flush)
                 flush = False
                 # antEvent is not set here; only for data on FE-C channel
 
@@ -1383,13 +1455,19 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
             # practical impact; grouping by Channel would enable to handle all
             # ANT in a channel (device) module. No advantage today.
             #-------------------------------------------------------------------
-            for d in data:
+            while AntDongle.MessageQueueSize() > 0:
+                d = AntDongle.MessageQueueGet()
+
                 synch, length, id, info, checksum, _rest, Channel, DataPageNumber = ant.DecomposeMessage(d)
                 error = False
 
                 if clv.Tacx_Vortex or clv.Tacx_Genius or clv.Tacx_Bushido:
                     if TacxTrainer.HandleANTmessage(d):
                         continue                    # Message is handled or ignored
+
+                if BlackTrack is not None:
+                    if BlackTrack.HandleAntMessage(d):
+                        continue
 
                 #---------------------------------------------------------------
                 # AcknowledgedData = Slave -> Master
@@ -1673,13 +1751,16 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
                         #-------------------------------------------------------
                         # Data page 0...4 HRM data
                         # Only expected when -H flag specified
+                        # #383/3 datapage 64 added, because of @krusty82's
+                        #        ANT+ HRM from Ciclosport...
                         #-------------------------------------------------------
-                        if DataPageNumber & 0x7f in (0,1,2,3,4,5,6,7,89,95):
+                        if DataPageNumber & 0x7f in (0,1,2,3,4,5,6,7,64,89,95):
                             if clv.hrm >= 0:
                                 _Channel, _DataPageNumber, _Spec1, _Spec2, _Spec3, \
                                     _HeartBeatEventTime, _HeartBeatCount, HeartRate = \
                                     ant.msgUnpage_Hrm(info)
-                                # print('Set heartrate from HRM', HeartRate)
+                                HeartRateTime = time.time() #381/4
+                                # logfile.Console('Heartrate received from HRM: %d' % HeartRate)
 
                             else:
                                 pass                            # Ignore it
@@ -1737,10 +1818,14 @@ def Tacx2DongleSub(FortiusAntGui, Restart):
                     elif Channel == ant.channel_HRM_s and DeviceTypeID == ant.DeviceTypeID_HRM:
                         AntHRMpaired = True
                         FortiusAntGui.SetMessages(HRM='Heart Rate Monitor paired: %s' % DeviceNumber)
+                        # logfile.Console('Heart Rate Monitor paired: %s' % DeviceNumber)
+
+                    elif Channel == ant.channel_CTRL:
+                        pass # Ignore since 2022-08-22; to be investigated
+                             # Obviously message was dropped before
 
                     else:
                         logfile.Console('Unexpected device %s on channel %s' % (DeviceNumber, Channel))
-                        
 
                 #---------------------------------------------------------------
                 # Message ChannelResponse, acknowledges a message
