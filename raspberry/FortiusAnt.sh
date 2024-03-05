@@ -2,9 +2,9 @@
 #cd /home/pi/FortiusANT/raspberry
 #------------------------------------------
 #Activate the virtual envirment: FortAntEnv
-cd /home/pi/FortiusANT/raspberry/
+cd $HOME/FortiusANT/raspberry/
 source FortAntEnv/bin/activate
--------------------------------------------
+#-------------------------------------------
 
 # autostart, bluetooth, gui - which is most general for Raspberry usage
 # options:
@@ -15,7 +15,7 @@ source FortAntEnv/bin/activate
 #
 # 2022-03-16; BLE-implementation changed to -bb bless (was -b nodejs)
 #
-~/FortiusANT/raspberry/FortiusAntMain.sh -a -bb -g
+./FortiusAntMain.sh -a -bb -g
 # ----------------------------------------------------- Done
 
 Raspberry='\033[0;35m'
